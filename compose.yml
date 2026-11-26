@@ -1,0 +1,6 @@
+services:
+  api:
+    image: localhost:5000/pagosya-api:${TAG:-dev}
+    ports: ["8080:8000"]
+    # Sin init, Python es PID 1 e ignora SIGTERM: Docker espera 10 s antes de matarlo
+    init: true
