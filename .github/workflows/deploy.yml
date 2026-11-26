@@ -1,0 +1,59 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: pagosya-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Iniciar sesión en Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Construir imagen con el tag del commit
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          TAG="${GITHUB_SHA:0:7}"
+          IMAGE="docker.io/${DOCKERHUB_USERNAME}/pagosya-api:${TAG}"
+
+          docker build --build-arg APP_VERSION="$TAG" -t "$IMAGE" app/
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Arrancar PagosYA y ejecutar el smoke test
+        run: |
+          docker run -d --name pagosya -p 127.0.0.1:8080:8000 "$IMAGE"
+          EXPECTED="PagosYA api $TAG"
+
+          for attempt in {1..15}; do
+            if RESPONSE=$(curl --fail --silent --max-time 2 http://localhost:8080/) \
+              && [[ "$RESPONSE" == "$EXPECTED" ]]; then
+              echo "Smoke test OK: $RESPONSE"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Smoke test falló. Se esperaba: $EXPECTED" >&2
+          docker logs pagosya
+          exit 1
+
+      - name: Publicar imagen en Docker Hub
+        if: ${{ success() }}
+        run: docker push "$IMAGE"
